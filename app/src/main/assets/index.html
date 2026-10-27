@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<!-- Calculadora BCV — interfaz v1.4 | Autor: Renato Andara | Desarrollado por R.A. 2026 -->
+<html lang="es">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="author" content="Renato Andara">
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--txt:#14181f;--sub:#5d6675;--acento:#1f3a8a;--borde:#d9dde4;--ok:#0f7a4a;--warn:#a15c00}
+  @media (prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#1a1f29;--txt:#eef1f6;--sub:#9aa4b4;--acento:#7ea2ff;--borde:#2b3240;--ok:#46c08a;--warn:#e0a34a}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  main{max-width:460px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  h1{font-size:20px;margin:0}
+  .card{background:var(--card);border:1px solid var(--borde);border-radius:14px;padding:14px;margin-bottom:12px}
+  .tasas{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .tasa span{display:block;font-size:13px;color:var(--sub)}
+  .tasa strong{font-size:22px;font-variant-numeric:tabular-nums}
+  .meta{font-size:13px;color:var(--sub);margin:10px 0 0}
+  .meta.err{color:var(--warn)}
+  .seg{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px}
+  .seg button{padding:10px;border-radius:10px;border:1px solid var(--borde);background:transparent;color:var(--txt);font-size:15px}
+  .seg button.on{background:var(--acento);border-color:var(--acento);color:#fff}
+  label{display:block;font-size:13px;color:var(--sub);margin-bottom:4px}
+  input{width:100%;font-size:28px;padding:10px 12px;border-radius:10px;border:1px solid var(--borde);background:var(--bg);color:var(--txt);font-variant-numeric:tabular-nums}
+  input:focus{outline:2px solid var(--acento);border-color:transparent}
+  .campo{margin-bottom:12px}
+  .acciones{display:flex;gap:8px}
+  .acciones button,#refrescar{padding:10px 14px;border-radius:10px;border:1px solid var(--borde);background:var(--card);color:var(--txt);font-size:15px}
+  #refrescar{background:var(--acento);border-color:var(--acento);color:#fff;font-weight:600}
+  #refrescar:disabled{opacity:.6}
+  .fecha{font-size:15px;font-weight:600;margin:0 0 10px}
+  #estado{font-size:13px;color:var(--sub);text-align:center;min-height:18px}
+  #estado.off{color:var(--warn)}
+  footer{font-size:12px;color:var(--sub);text-align:center;margin-top:18px;padding-bottom:8px}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Calculadora BCV</h1>
+    <button id="refrescar">Actualizar</button>
+  </header>
+
+  <section class="card">
+    <p class="fecha" id="fecha">Tasa del día: —</p>
+    <div class="tasas">
+      <div class="tasa"><span>Dólar (USD)</span><strong id="tUSD">—</strong></div>
+      <div class="tasa"><span>Euro (EUR)</span><strong id="tEUR">—</strong><span id="fEUR"></span></div>
+    </div>
+    <p class="meta" id="info">Cargando tasa…</p>
+    <p class="meta" id="anterior"></p>
+  </section>
+
+  <section class="card">
+    <div class="seg">
+      <button data-m="USD" class="on">Dólar $</button>
+      <button data-m="EUR">Euro €</button>
+    </div>
+    <div class="campo">
+      <label for="divisa" id="lblDivisa">Dólares (USD)</label>
+      <input id="divisa" inputmode="decimal" autocomplete="off" placeholder="0,00">
+    </div>
+    <div class="campo">
+      <label for="bs">Bolívares (Bs)</label>
+      <input id="bs" inputmode="decimal" autocomplete="off" placeholder="0,00">
+    </div>
+    <div class="acciones">
+      <button id="limpiar">Limpiar</button>
+      <button id="copiar">Copiar resultado</button>
+    </div>
+  </section>
+
+  <p id="estado"></p>
+  <footer>Desarrollado por R.A. 2026</footer>
+</main>
+
+<script>
+// Calculadora BCV — lógica del cliente v1.4 | Autor: Renato Andara
+// Funciona sin conexión cuando ya hay una tasa guardada para el día.
+const CLAVE = 'bcv_tasas_v1';
+let tasas = null, moneda = 'USD', ultimo = 'divisa', consultando = false;
+const $ = id => document.getElementById(id);
+
+const fmt = (n, d = 2) => n.toLocaleString('es-VE', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+// Acepta "1.234,56", "1234,56" o "1234.56"
+function num(s) {
+  s = String(s).trim().replace(/\s/g, '');
+  if (!s) return NaN;
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  return Number(s);
+}
+
+function partes(ms) {
+  const o = {};
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Caracas', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', hour12: false, weekday: 'short'
+  }).formatToParts(new Date(ms)).forEach(p => o[p.type] = p.value);
+  return { dia: `${o.year}-${o.month}-${o.day}`, hora: Number(o.hour) % 24, dow: o.weekday };
+}
+
+// ¿La tasa guardada sirve para hoy? (fecha valor igual o posterior a hoy)
+function esDelDia(t) {
+  if (!t) return false;
+  const hoy = partes(Date.now()).dia;
+  if (t.fechaISO) return t.fechaISO >= hoy;
+  return partes(t.revisado).dia === hoy;   // sin fecha valor: revisada hoy
+}
+
+// Una vez al día; y lun–vie después de las 3 pm otra vez, salvo que ya se tenga
+// la tasa del siguiente día hábil (fecha valor posterior a hoy).
+function debeRevisar(t) {
+  if (!t || !t.revisado) return true;
+  if (!esDelDia(t)) return true;
+  const a = partes(Date.now()), r = partes(t.revisado);
+  if (t.fechaISO && t.fechaISO > a.dia) return false;
+  const habil = !['Sat', 'Sun'].includes(a.dow);
+  return habil && a.dia === r.dia && a.hora >= 15 && r.hora < 15;
+}
+
+const enLinea = () => navigator.onLine !== false;
+
+// Fecha valor en formato dd/mm/aaaa (usa la fecha ISO o, si falta, el texto del BCV)
+const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+function ddmmaaaa(t) {
+  if (!t) return '—';
+  if (t.fechaISO) { const [a, m, d] = t.fechaISO.split('-'); return `${d}/${m}/${a}`; }
+  const s = (t.fechaValor || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const m = s.match(/(\d{1,2})\s*(?:de\s+)?([a-z]+)\s*(?:de\s+)?(\d{4})/);
+  if (m) {
+    const mes = MESES.findIndex(x => m[2].startsWith(x.slice(0, 3))) + 1;
+    if (mes) return `${m[1].padStart(2, '0')}/${String(mes).padStart(2, '0')}/${m[3]}`;
+  }
+  return t.fechaValor || '—';
+}
+
+function aviso(txt, off) { $('estado').textContent = txt; $('estado').classList.toggle('off', !!off); }
+
+function leerLocal() { try { return JSON.parse(localStorage.getItem(CLAVE)); } catch (e) { return null; } }
+function guardarLocal(d) { try { localStorage.setItem(CLAVE, JSON.stringify(d)); } catch (e) {} }
+
+function mostrar() {
+  if (!tasas) return;
+  $('tUSD').textContent = fmt(tasas.USD, 4);
+  $('tEUR').textContent = fmt(tasas.EUR, 4);
+  const rev = new Date(tasas.revisado).toLocaleString('es-VE', {
+    timeZone: 'America/Caracas', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+  });
+  const info = $('info');
+  $('fecha').textContent = `Tasa del día: ${ddmmaaaa(tasas)}`;
+  const fe = tasas.fechaISO_EUR;
+  $('fEUR').textContent = fe && fe !== tasas.fechaISO ? `al ${ddmmaaaa({ fechaISO: fe })}` : '';
+  info.textContent = `Revisado: ${rev}` + (tasas.fuente ? ` · ${tasas.fuente}` : '');
+  info.classList.toggle('err', !!tasas.error);
+  if (tasas.error) info.textContent += ` · ⚠ ${tasas.error}`;
+  const ant = tasas.anterior;
+  $('anterior').textContent = ant
+    ? `Anterior (${ddmmaaaa(ant)}): USD ${fmt(ant.USD, 4)} · EUR ${fmt(ant.EUR, 4)}`
+    : '';
+  recalcular();
+}
+
+function recalcular() {
+  const t = tasas && tasas[moneda];
+  if (!t) return;
+  if (ultimo === 'divisa') {
+    const v = num($('divisa').value);
+    $('bs').value = isNaN(v) ? '' : fmt(v * t);
+  } else {
+    const v = num($('bs').value);
+    $('divisa').value = isNaN(v) ? '' : fmt(v / t);
+  }
+}
+
+// Sin conexión o si la consulta falla: se queda con la tasa guardada
+function sinConexion(motivo) {
+  if (tasas) {
+    const vig = esDelDia(tasas);
+    aviso((vig ? '📴 Sin conexión · usando la tasa guardada del ' : '⚠ Sin conexión · última tasa disponible: ')
+      + ddmmaaaa(tasas), !vig);
+  } else {
+    aviso('Sin conexión y sin tasa guardada. Conéctate y pulsa Actualizar.' + (motivo ? ' (' + motivo + ')' : ''), true);
+  }
+}
+
+// Descarga JSON: dentro del APK usa el puente nativo de Android; si no, fetch normal
+const pendientes = {};
+window.__respuestaNativa = (id, code, body) => {
+  const p = pendientes[id]; if (!p) return;
+  delete pendientes[id];
+  if (code >= 200 && code < 300) { try { p.ok(JSON.parse(body)); } catch (e) { p.error(e); } }
+  else p.error(new Error(code ? 'HTTP ' + code : (body || 'Sin conexión')));
+};
+function obtenerJSON(url) {
+  if (window.AndroidBCV && AndroidBCV.get) {
+    return new Promise((ok, error) => {
+      const id = 'r' + Math.random().toString(36).slice(2);
+      pendientes[id] = { ok, error };
+      setTimeout(() => { if (pendientes[id]) { delete pendientes[id]; error(new Error('Tiempo agotado')); } }, 20000);
+      AndroidBCV.get(url, id);
+    });
+  }
+  return fetch(url, { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+}
+
+// Consulta: en Apps Script usa el servidor; si el archivo se abre suelto, va directo a DolarApi
+function pedirTasas(forzar, ok, error) {
+  if (window.google && google.script && google.script.run) {
+    google.script.run.withSuccessHandler(ok).withFailureHandler(error).getTasas(!!forzar);
+    return;
+  }
+  const api = 'https://ve.dolarapi.com/v1/';
+  const dia = s => s ? partes(new Date(s).getTime()).dia : null;
+  Promise.all(['dolares/oficial', 'euros/oficial'].map(p => obtenerJSON(api + p))).then(([u, e]) => {
+    const previo = tasas;
+    const d = {
+      USD: Number(u.promedio ?? u.venta), EUR: Number(e.promedio ?? e.venta),
+      fechaISO: dia(u.fechaActualizacion), fechaISO_EUR: dia(e.fechaActualizacion),
+      fuente: 'DolarApi (oficial BCV)', revisado: Date.now(), origen: 'bcv'
+    };
+    d.fechaValor = d.fechaISO;
+    if (!(d.USD > 0 && d.EUR > 0)) throw new Error('Respuesta sin tasas');
+    if (previo && previo.fechaISO !== d.fechaISO) d.anterior = { USD: previo.USD, EUR: previo.EUR, fechaISO: previo.fechaISO };
+    else if (previo) d.anterior = previo.anterior || null;
+    ok(d);
+  }).catch(error);
+}
+
+function cargar(forzar) {
+  if (consultando) return;
+  if (!forzar && tasas && !debeRevisar(tasas)) {        // ya hay tasa del día: no consulta
+    aviso('Tasa del día guardada' + (enLinea() ? '' : ' · 📴 sin conexión'));
+    return;
+  }
+  if (!enLinea()) { sinConexion(); return; }
+  consultando = true;
+  $('refrescar').disabled = true;
+  $('refrescar').textContent = 'Actualizando…';
+  aviso('Consultando tasa…');
+  const fin = () => { consultando = false; $('refrescar').disabled = false; $('refrescar').textContent = 'Actualizar'; };
+  pedirTasas(forzar, d => {
+    fin();
+    tasas = d; guardarLocal(d); mostrar();
+    aviso(d.origen === 'bcv' ? 'Tasa actualizada' : 'Tasa del día (sin cambios)');
+  }, e => {
+    fin();
+    sinConexion(e && e.message ? e.message : String(e));
+  });
+}
+
+// Eventos
+$('divisa').addEventListener('input', () => { ultimo = 'divisa'; recalcular(); });
+$('bs').addEventListener('input', () => { ultimo = 'bs'; recalcular(); });
+document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+  moneda = b.dataset.m;
+  document.querySelectorAll('.seg button').forEach(x => x.classList.toggle('on', x === b));
+  $('lblDivisa').textContent = moneda === 'USD' ? 'Dólares (USD)' : 'Euros (EUR)';
+  recalcular();
+}));
+$('limpiar').addEventListener('click', () => { $('divisa').value = ''; $('bs').value = ''; $(ultimo).focus(); });
+$('copiar').addEventListener('click', () => {
+  const val = ultimo === 'divisa' ? $('bs').value : $('divisa').value;
+  if (!val) return;
+  navigator.clipboard?.writeText(val).then(() => $('estado').textContent = 'Copiado: ' + val);
+});
+$('refrescar').addEventListener('click', () => cargar(true));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) cargar(false); });
+window.addEventListener('online', () => cargar(false));
+window.addEventListener('offline', () => sinConexion());
+
+// Inicio: muestra lo guardado al instante y revisa solo si toca
+tasas = leerLocal();
+mostrar();
+cargar(false);
+</script>
+</body>
+</html>

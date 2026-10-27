@@ -1,0 +1,44 @@
+// Calculadora BCV — Autor: Renato Andara
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 've.renatoandara.calculadorabcv'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 've.renatoandara.calculadorabcv'
+        minSdk 26          // Android 8.0 o superior
+        targetSdk 34
+        versionCode 1
+        versionName '1.4'
+    }
+
+    // Firma fija: permite instalar versiones nuevas encima de la anterior
+    // sin perder la tasa guardada. Mantén el repositorio PRIVADO.
+    signingConfigs {
+        release {
+            storeFile file('firma-calculadora.jks')
+            storePassword 'seDHynpbtIAmTDMmffsaGqAB'
+            keyAlias 'calculadora'
+            keyPassword 'seDHynpbtIAmTDMmffsaGqAB'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+}
